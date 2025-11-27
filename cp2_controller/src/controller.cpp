@@ -47,7 +47,7 @@ private:
     // PD control parameters
     double K_p_lin = 0.5;
     double K_d_lin = 0.1;
-    double K_p_ang = 1.0;
+    double K_p_ang = 0.3;
     double K_d_ang = 0.2;
     
     // tolerance (offset) in meters - robot stops within this distance from goal
@@ -64,8 +64,8 @@ private:
 
     if(dist > 1e-6)
     {
-      double target_yaw = atan2(dy, dx);
-      double yaw_error = smallestDeltaAngle(target_yaw, yaw);
+      target_yaw = atan2(dy, dx);
+      yaw_error = smallestDeltaAngle(target_yaw, yaw);
     }
 
     // compute time delta
@@ -83,8 +83,8 @@ private:
     last_time_ = current_time;
 
     geometry_msgs::msg::Twist cmd;
-    cmd.linear.x = K_p_lin * dist + K_d_lin * dist_error_rate;
-    cmd.angular.z = K_p_ang * yaw_error + K_d_ang * yaw_error_rate;
+    //cmd.linear.x = -K_p_lin * dist - K_d_lin * dist_error_rate;
+    //cmd.angular.z = K_p_ang * yaw_error + K_d_ang * yaw_error_rate;
     //cmd.linear.x = 0.0;
     //cmd.angular.z = 0.0;
 
