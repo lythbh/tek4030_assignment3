@@ -60,8 +60,8 @@ private:
     // PD control parameters
     double K_p_lin = 1.2;
     double K_d_lin = 0.5;
-    double K_p_ang = 1.5;
-    double K_d_ang = 0.0;
+    double K_p_ang = 0.8;
+    double K_d_ang = 0.1;
     
     // tolerance (offset) in meters
     double tolerance = 0.05;
@@ -82,6 +82,8 @@ private:
     double yaw_error_rate = 0.0;
     double dist_error_rate = 0.0;
 
+    geometry_msgs::msg::Twist cmd;
+
     // Only calculate errors if outside tolerance
     if(dist > tolerance)
     {
@@ -95,14 +97,19 @@ private:
       
       dist_error_rate = (dist - last_dist_error_) / dt;
     }
+    else {
+      // Inside tolerance: Stop everything. 
+      while (target_yaw < 0.1 && target_yaw > -0.1){
+        cmd.angular.z = 0.1;
+        cmd.linear.x = 0.0;
+      }
+    }
 
     // store current errors for next iteration
     // If we are in tolerance, we essentially reset the history to 0
     last_dist_error_ = dist;
     last_yaw_error_ = yaw_error;
     last_time_ = current_time;
-
-    geometry_msgs::msg::Twist cmd;
     
     // FIX: Soft Start Orientation Gate.
     // Instead of a hard cut-off at 1.0 rad (which caused the start-stop oscillation),
