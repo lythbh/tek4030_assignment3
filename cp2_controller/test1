@@ -1,0 +1,136 @@
+#include <rclcpp/rclcpp.hpp>
+#include <geometry_msgs/msg/twist.hpp>
+#include <mocap4r2_msgs/msg/rigid_bodies.hpp>
+#include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <cmath>
+#include <chrono>
+
+class MocapController : public rclcpp::Node
+{
+public:
+  MocapController() : Node("mocap_controller"),
+    last_dist_error_(0.0), last_yaw_error_(0.0),
+    first_run_(true) // Added flag to prevent jump on startup
+  {
+    cmd_pub_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
+
+    mocap_sub_ = create_subscription<mocap4r2_msgs::msg::RigidBodies>(
+      "/rigid_bodies", 10,
+      std::bind(&MocapController::mocap_callback, this, std::placeholders::_1));
+
+    last_time_ = this->now();
+    RCLCPP_INFO(get_logger(), "Controller started.");
+  }
+
+private:
+
+  static double smallestDeltaAngle(const double& x, const double& y)
+  {
+    return atan2(sin(x - y), cos(x - y));
+  }
+
+  void mocap_callback(const mocap4r2_msgs::msg::RigidBodies::SharedPtr msg)
+  {
+    // FIX 1: Safety check for empty array
+    if (msg->rigidbodies.empty()) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "No rigid bodies found!");
+      return;
+    }
+
+    // FIX 2: Check index (User had [4], likely should be [0] unless you have 5 bodies)
+    // If you specifically need ID 4, you should loop through to find body with ID 4.
+    // For now, I assume you want the first available robot.
+    auto rb = msg->rigidbodies[0]; 
+
+    // FIX 3: Check for NaN (Loss of Tracking)
+    if (std::isnan(rb.pose.position.x) || std::isnan(rb.pose.position.y)) {
+       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "Tracking lost (NaN detected).");
+       return; 
+    }
+
+    double x = rb.pose.position.x;
+    double y = rb.pose.position.y;
+    double yaw = tf2::getYaw(rb.pose.orientation);
+
+    double goal_x = 0.0;
+    double goal_y = 0.0;
+
+    // PD control parameters
+    double K_p_lin = 0.5;
+    double K_d_lin = 0.1;
+    double K_p_ang = 1.0;
+    double K_d_ang = 0.2;
+    
+    double tolerance = 0.05; 
+
+    double dx = goal_x - x;
+    double dy = goal_y - y;
+
+    double dist = std::sqrt(dx*dx + dy*dy);
+    
+    // FIX 4: Removed "double" to avoid variable shadowing
+    double target_yaw = 0.0;
+    double yaw_error = 0.0;
+
+    if(dist > 1e-6)
+    {
+      target_yaw = atan2(dy, dx); // Corrected: Updates the existing variable
+      yaw_error = smallestDeltaAngle(target_yaw, yaw); // Corrected
+    }
+
+    auto current_time = this->now();
+    double dt = (current_time - last_time_).seconds();
+    if (dt < 1e-6) dt = 1e-6; 
+
+    // FIX 5: Handle first run to avoid derivative spikes
+    if (first_run_) {
+        last_dist_error_ = dist;
+        last_yaw_error_ = yaw_error;
+        first_run_ = false;
+        last_time_ = current_time;
+        return; // Skip first command to let errors initialize
+    }
+
+    double dist_error_rate = (dist - last_dist_error_) / dt;
+    double yaw_error_rate = (yaw_error - last_yaw_error_) / dt;
+
+    last_dist_error_ = dist;
+    last_yaw_error_ = yaw_error;
+    last_time_ = current_time;
+
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = K_p_lin * dist + K_d_lin * dist_error_rate;
+    cmd.angular.z = K_p_ang * yaw_error + K_d_ang * yaw_error_rate;
+
+    // Optional: Clamp values for safety in the lab
+    if (cmd.linear.x > 0.3) cmd.linear.x = 0.3;
+
+    // Stop if within tolerance
+    if (dist < tolerance) {
+        cmd.linear.x = 0.0;
+        cmd.angular.z = 0.0;
+    }
+
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+      "dist: %.3f, ang_err: %.3f, cmd_x: %.3f", dist, yaw_error, cmd.linear.x);
+
+    cmd_pub_->publish(cmd);
+  }
+
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
+  rclcpp::Subscription<mocap4r2_msgs::msg::RigidBodies>::SharedPtr mocap_sub_;
+  
+  double last_dist_error_;
+  double last_yaw_error_;
+  rclcpp::Time last_time_;
+  bool first_run_;
+};
+
+int main(int argc, char **argv)
+{
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<MocapController>());
+  rclcpp::shutdown();
+  return 0;
+}
